@@ -26,7 +26,23 @@ def np_e1():
                                                         [-0.40, 0.90, 0.10, -0.20]])))
     return A
 
+def np_e2():
+    a = np.array([0.80, -0.60, 0.70])
+    b = np.array([-0.20, 0.90, 0.40])
+
+    had = a * b
+    dot = a @ b
+    print("a * b =", had, "shape =", had.shape)
+    print("a @ b =", round(float(dot), 6), "shape =", np.asarray(dot).shape)
+
+    norm_a = np.sqrt(np.sum(a ** 2))
+    norm_b = np.sqrt(np.sum(b ** 2))
+    print("||a||  =", round(norm_a, 6), "| np.linalg.norm =", round(np.linalg.norm(a), 6))
+    print("||b||  =", round(norm_b, 6), "| np.linalg.norm =", round(np.linalg.norm(b), 6))
+    print("核对:", np.allclose(norm_a, np.linalg.norm(a)) and np.allclose(norm_b, np.linalg.norm(b)))
+    return a, b
 
 
 if __name__ == "__main__":
-    np_e1()
+    # np_e1()
+    np_e2()
