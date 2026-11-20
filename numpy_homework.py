@@ -132,12 +132,209 @@ def np_e8():
     print("转为 (B,H,W,C) 后 shape =", batch_hwc.shape)
     return batch
 
+
+def angles_to(query, X):
+    query = np.asarray(query, dtype=np.float64)
+    X = np.asarray(X, dtype=np.float64)
+    if query.ndim != 1 or X.ndim != 2 or X.shape[1] != query.shape[0]:
+        raise ValueError("angles_to 需要列数匹配，收到 %s 与 %s"
+                         % (query.shape, X.shape))
+    nq = float(np.linalg.norm(query))
+    if nq == 0.0:
+        raise ValueError("angles_to 的 query 不能为零向量")
+    nX = np.linalg.norm(X, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cos = (X @ query) / (nX * nq)
+    cos = np.clip(cos, -1.0, 1.0)
+    ang = np.degrees(np.arccos(cos))
+    return np.where(nX == 0.0, np.nan, ang)
+
+
+def np_m1():
+    query = np.array([0.60, -0.80, 0.00])
+    X = np.array([[0.30, -0.40, 0.00],
+                  [-0.60, 0.80, 0.00],
+                  [0.80, 0.60, 0.00],
+                  [0.00, 0.00, 0.00]])
+
+    ang = angles_to(query, X)
+    print("1) angles_to(query, X) shape =", ang.shape, "度 =", ang)
+    print("   第 4 行为零向量输出 nan 结果为", np.isnan(ang[3]))
+    # ref = np.array([angle_deg(X[i], query) if np.linalg.norm(X[i]) else np.nan
+    #                 for i in range(X.shape[0])])
+    # print("   与遍历X各行的循环实现一致 =", np.allclose(ang, ref, atol=TOL, equal_nan=True))
+    try:
+        angles_to(np.zeros(3), X)
+    except ValueError as e:
+        print("   边界输入 query 为零向量 -> ValueError:", e)
+    try:
+        angles_to(query, X[:, :2])
+    except ValueError as e:
+        print("   边界输入 列数不匹配 -> ValueError:", e)
+    return ang
+
+def top_k_cosine(query, gallery, k):
+    query = np.asarray(query, dtype=np.float64)
+    gallery = np.asarray(gallery, dtype=np.float64)
+    if query.ndim != 1 or gallery.ndim != 2 or gallery.shape[1] != query.shape[0]:
+        raise ValueError("top_k_cosine 需要 query(d,) 与 gallery(N,d)，收到 %s 与 %s"
+                         % (query.shape, gallery.shape))
+    if isinstance(k, bool) or not isinstance(k, (int, np.integer)):
+        raise ValueError("k 必须是正整数，收到 %r" % (k,))
+    nG = np.linalg.norm(gallery, axis=1)
+    n_valid = int((nG > 0.0).sum())
+    if k <= 0 or k > n_valid:
+        raise ValueError("k 必须是 1~%d（有效行数）的正整数，收到 %d" % (n_valid, k))
+    nq = float(np.linalg.norm(query))
+    if nq == 0.0:
+        raise ValueError("top_k_cosine 的 query 不能为零向量")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sim = (gallery @ query) / (nG * nq)
+    sim = np.where(nG > 0.0, sim, -np.inf)
+    order = np.argsort(-sim, kind="stable")
+    idx = order[:k]
+    return idx, sim[idx]
+
+
+def np_m2():
+    query = np.array([0.60, -0.80, 0.00])
+    gallery = np.array([[0.60, -0.80, 0.00],
+                        [0.30, -0.40, 0.00],
+                        [0.80, 0.60, 0.00],
+                        [-0.60, 0.80, 0.00],
+                        [0.00, 0.00, 0.00]])
+    ids = np.array(["img_a", "img_b", "img_c", "img_d", "img_zero"])
+    k = 3
+
+    idx, sim = top_k_cosine(query, gallery, k)
+    print("1) k =", k, "| 选中行索引 =", idx, "| 相似度（降序）=", sim)
+    print("   选中 ID =", [str(ids[i]) for i in idx])
+    with np.errstate(invalid="ignore", divide="ignore"):
+        sim_all = (gallery @ query) / (np.linalg.norm(gallery, axis=1) * np.linalg.norm(query))
+    print("   全库相似度 =", np.array2string(sim_all, precision=6),
+          "（零向量行为 nan）")
+    print("   img_a 与 img_b 同为 1.0，稳定排序保持原行顺序 =",
+          list(idx[:2]) == [0, 1])
+    for bad in (5, 0, -1, 2.5):
+        try:
+            top_k_cosine(query, gallery, bad)
+        except ValueError as e:
+            print("   边界输入 k =", bad, "-> ValueError:", e)
+    try:
+        top_k_cosine(np.zeros(3), gallery, k)
+    except ValueError as e:
+        print("   边界输入 零 query -> ValueError:", e)
+    return idx, sim
+
+def np_m3():
+    A = np.array([[0.20, -0.40],
+                  [0.80, 0.30],
+                  [-0.50, 0.70]])
+    B = np.array([[0.10, 0.20],
+                  [-0.60, -0.20]])
+
+    diff = A[:, None, :] - B[None, :, :]
+    print("1) 广播差数组 A[:,None,:] - B[None,:,:] shape =", diff.shape,
+          "= (M, N, d)，无双重循环")
+
+    D = np.linalg.norm(diff, axis=-1)
+    print("2) 距离矩阵 D shape =", D.shape, "（D[i,j] = A[i] 到 B[j] 的欧氏距离）")
+
+    print("3)   D =\n", D)
+    nearest = np.argmin(D, axis=1)
+    print(" A 每行最近的 B 行索引 =", nearest,
+          "->", [B[j].tolist() for j in nearest])
+
+    print("   边界输入 空 A(0,2) -> D shape =",
+          np.linalg.norm(np.zeros((0, 2))[:, None, :] - B[None, :, :], axis=-1).shape)
+    return D, nearest
+
+def np_m4():
+    X = np.array([[0.80, -0.60, 0.70],
+                  [-0.40, -0.50, 0.90]])
+    W1 = np.array([[-0.10, 0.20, -0.80],
+                   [0.30, -0.50, 0.10]])
+    b1 = np.array([-0.15, 0.05])
+    W2 = np.array([[0.20, -0.60], [-0.80, 0.52]])
+    b2 = np.array([0.10, -0.20])
+    snapshot = [arr.copy() for arr in (X, W1, b1, W2, b2)]
+
+    Z = X @ W1.T + b1
+    H = np.maximum(Z, 0.0)
+    Y = H @ W2.T + b2
+
+    print("1) Z = X @ W1.T + b1   shape =", Z.shape, "值 =\n", Z)
+    print("2) H = np.maximum(Z, 0.0) shape =", H.shape, "值 =\n", H)
+    print("3) Y = H @ W2.T + b2   shape =", Y.shape, "值 =\n", Y)
+    print("   形状流转：X(2,3) @ W1.T(3,2) -> Z(2,2) -> H(2,2) @ W2.T(2,2) -> Y(2,2)")
+    manual = float(H[1] @ W2[1] + b2[1])
+    print("   给定参数未被修改 =",
+          all(np.array_equal(s, v) for s, v in zip(snapshot, (X, W1, b1, W2, b2))))
+    try:
+        _ = X @ W1
+    except ValueError as e:
+        print("   边界输入 漏写 .T -> ValueError:", e)
+    return Z, H, Y
+
+
+
 if __name__ == "__main__":
-    # np_e1()
-    # np_e2()
-    # np_e3()
-    # np_e4()
-    # np_e5()
-    # np_e6()
-    # np_e7()
+    print("\n")
+    print("NumPy 数值计算练习：NP-E1 结果")
+    print("\n")
+    np_e1()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E2 结果")
+    print("\n")
+    np_e2()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E3 结果")
+    print("\n")
+    np_e3()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E4 结果")
+    print("\n")
+    np_e4()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E5 结果")
+    print("\n")
+    np_e5()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E6 结果")
+    print("\n")
+    np_e6()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E7 结果")
+    print("\n")
+    np_e7()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-E8 结果")
+    print("\n")
     np_e8()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-M1 结果")
+    print("\n")
+    np_m1()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-M2 结果")
+    print("\n")
+    np_m2()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-M3 结果")
+    print("\n")
+    np_m3()
+
+    print("\n")
+    print("NumPy 数值计算练习：NP-M4 结果")
+    print("\n")
+    np_m4()
